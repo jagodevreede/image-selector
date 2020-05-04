@@ -1,4 +1,4 @@
-package main.kotlin.util
+package util
 
 object Util {
     fun toReadableTime(ms: Long): String {

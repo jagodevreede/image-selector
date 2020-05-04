@@ -1,5 +1,6 @@
-package main.kotlin
+package util
 
+import javafx.scene.image.Image
 import org.opencv.core.CvType
 import org.opencv.core.Mat
 import org.opencv.core.Size
@@ -8,9 +9,14 @@ import java.awt.image.BufferedImage
 import java.awt.image.DataBufferByte
 import java.io.File
 import javax.imageio.ImageIO
+import java.io.ByteArrayInputStream
+import org.opencv.imgcodecs.Imgcodecs
+import org.opencv.core.MatOfByte
+
+
 
 object CV {
-    private fun loadBufferedImage(file: File): BufferedImage {
+    fun loadBufferedImage(file: File): BufferedImage {
         return ImageIO.read(file)
     }
 
@@ -23,6 +29,12 @@ object CV {
 
     fun loadMat(file: File): Mat {
         return bufferedImageToMat(loadBufferedImage(file))
+    }
+
+    fun matToJavaFxImage(mat: Mat): Image {
+        val byteMat = MatOfByte()
+        Imgcodecs.imencode(".bmp", mat, byteMat)
+        return Image(ByteArrayInputStream(byteMat.toArray()))
     }
 
     fun resizeToSameSize(matGray: Mat): Mat {

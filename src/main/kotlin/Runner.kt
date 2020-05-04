@@ -1,14 +1,9 @@
-package main.kotlin
-
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
-import main.kotlin.CV.loadMat
-import main.kotlin.util.Util.toReadableTime
 import org.opencv.core.Mat
-import org.opencv.core.MatOfFloat
-import org.opencv.core.MatOfInt
 import org.opencv.imgproc.Imgproc
+import util.Util.toReadableTime
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
@@ -16,23 +11,22 @@ import java.io.IOException
 import java.time.Duration
 import java.time.ZoneOffset
 import java.time.temporal.ChronoUnit
-import java.util.*
 
 
-class Runner(private val folder: File, private val outputFolder: File, private val nima: Nima, private val reduceTo: Int) {
+class Runner(private val folder: File, private val outputFolder: File, private val nima: Nima, private val reduceTo: Int, private val similarThreshold: Double) {
 
     companion object{
         const val AVG_DURATION_MULTIPLIER = 2
         const val SHARPNESS_MULTIPLIER = 0.1
-        const val SIMILAR_THRESHOLD = 0.80
     }
 
-    private var ranges = MatOfFloat(0f, 256f)
-    private var histSize = MatOfInt(128) // 25
+    private val collectionToKeep = mutableSetOf<FileStats>()
+    private lateinit var rawFolderStats: MutableList<FileStats>
 
-    fun run() {
-        val fileStats: List<FileStats> = FileStatsCalculator(folder, nima).calulate()
-
+    private fun processFolderFileStats(inComingFileStats: List<FileStats>): MutableList<FileStats> {
+        println("Using similarThreshold: $similarThreshold")
+        collectionToKeep.clear()
+        val fileStats = inComingFileStats.filter { !it.ignored }
         val similarImagesByFileStat = findSimilarImages(fileStats)
 
         println("Processing %d files to %d".format(fileStats.count(), reduceTo))
@@ -42,7 +36,7 @@ class Runner(private val folder: File, private val outputFolder: File, private v
         println("Avg between photo's %d seconds".format(avgDuration))
 
         val collections: MutableList<List<FileStats>> = findCollectionsByDateRoot(orderedByDate, avgDuration)
-        val collectionToKeep = mutableSetOf<FileStats>()
+
         val totalRemainingCollection = mutableSetOf<FileStats>()
 
         val averageSharpness = fileStats.sortedBy { it.sharpness }.map { it.sharpness }.average()
@@ -76,11 +70,32 @@ class Runner(private val folder: File, private val outputFolder: File, private v
         println("photo's to keep: ${collectionToKeep.size}")
         collectionToKeep.sortedBy { it.file }.forEach {
             println(it.toString() + " ratingWeighted " + it.ratingWeighted(maxSharpness.toDouble()))
-            copyFile(it.file, File(outputFolder, it.file.name))
         }
         println("Average rating was    $averageRating final collection: ${collectionToKeep.map { it.rating }.average()}")
         println("Average sharpness was $averageSharpness final collection: ${collectionToKeep.map { it.sharpness }.average()}")
         println("Max     sharpness     $maxSharpness final collection: ${collectionToKeep.map { it.sharpness }.max()}")
+
+        return collectionToKeep.sortedBy { it.file.name }.toMutableList()
+    }
+
+    fun getResult(): MutableList<FileStats> {
+        rawFolderStats = FileStatsCalculator(folder, nima).calulate().toMutableList()
+
+        return processFolderFileStats(rawFolderStats)
+    }
+
+    fun updateResults(fileStats: List<FileStats>): MutableList<FileStats> {
+        fileStats.filter { it.ignored }.forEach { newStat ->
+            rawFolderStats.removeAll { it.file.absolutePath == newStat.file.absolutePath }
+        }
+
+        return processFolderFileStats(rawFolderStats)
+    }
+
+    fun copyToOutput() {
+        collectionToKeep.sortedBy { it.file }.forEach {
+            copyFile(it.file, File(outputFolder, it.file.name))
+        }
     }
 
     private fun findCollectionsByDateRoot(orderedByDate: List<FileStats>, avgDuration: Long): MutableList<List<FileStats>> {
@@ -129,7 +144,8 @@ class Runner(private val folder: File, private val outputFolder: File, private v
                 val histogram = histogramByFileStat.get(it)
                 val res: Double = Imgproc.compareHist(ownHistogram, histogram, Imgproc.CV_COMP_CORREL)
                 //println(stat.file.name + " similar to " + it.file.name + " " + res)
-                res > SIMILAR_THRESHOLD
+
+                res > similarThreshold
             }
         })
         println("Finding similar images done in %s".format(toReadableTime(System.currentTimeMillis() - startTime)))
@@ -144,35 +160,13 @@ class Runner(private val folder: File, private val outputFolder: File, private v
         val result = mutableMapOf<FileStats, Mat>()
         chunks.forEachParallel { fileStatsChunk ->
             val histograms = fileStatsChunk.associateBy({ it }, {
-                val img = (loadMat(it.file))
-                val hist = Mat()
-
-                Imgproc.calcHist(Arrays.asList(img), MatOfInt(0),
-                        Mat(), hist, histSize, ranges)
-
-
-                var total = 0.0
-
-                var data = mutableListOf<Double>()
-
-                for (row in 0 until hist.rows()) {
-                    val value = hist.get(row, 0)[0]
-                    data.add(value)
-
-                    total += value
-                }
-
+                val data = it.histogramData
                 val restoreMat = Mat(data.size, 1, 5)
 
                 data.forEachIndexed { index, d ->
                   restoreMat.put(index, 0, d)
                 }
-
-
-
-              //  println(it.file.name + " hist: " + total / hist.rows())
-
-                hist
+                restoreMat
             })
             synchronized(result) {
                 result.putAll(histograms)

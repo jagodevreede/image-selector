@@ -1,6 +1,5 @@
 package util
 
-import main.kotlin.util.Util
 import org.junit.jupiter.api.Assertions
 import org.junit.jupiter.api.Test
 

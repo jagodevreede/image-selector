@@ -3,3 +3,4 @@ images/
 model/
 target/
 *.iml
+settings.properties
